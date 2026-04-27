@@ -6,6 +6,9 @@ const riskBg = s => s >= 6 ? "#ef4444" : s >= 3 ? "#f59e0b" : "#22c55e";
 const SAUSAGES = ["설치, 이전, 변경","신규","정비, 보수","산업재해","기타"];
 const IMG_TYPES = ["jpg","jpeg","png","gif","webp","bmp"];
 
+// ── Claude API 프록시 (Vercel Serverless Function) ──
+const CLAUDE_API = "/api/claude";
+
 // ── Google Forms 사용 이력 기록 ──
 const FORM_ID = "1FAIpQLSequrKF9D3647fpyhWSAsxcaYDnr3kNlD0zigDgsKvHeRlDlQ";
 const FORM_URL = `https://docs.google.com/forms/d/e/${FORM_ID}/formResponse`;
@@ -31,6 +34,23 @@ const ADMIN_EMAIL = "kfisafety119@gmail.com";
 
 function fmtDate(s){if(!s)return"";const d=new Date(s);return isNaN(d)?s:`${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일`;}
 function toBase64(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(f);});}
+
+async function callClaude(messages, maxTokens = 1000) {
+  const res = await fetch(CLAUDE_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: maxTokens,
+      messages
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${errText}`);
+  }
+  return await res.json();
+}
 
 async function logToGoogleForm(form, 항목, fileCount, saveType) {
   try {
@@ -75,7 +95,7 @@ async function sendEmailToAdmin(form, 항목, saveType) {
   }
   try {
     const summary = 항목.map(item=>{
-      const b=item.개선전||{},a=item.개선후||{};
+      const b=item.개선전||{};
       const bS=(b.빈도||1)*(b.강도||1);
       return `▣ ${item.구분} (위험도: ${bS})\n  · 위험요인: ${item.주요위험요인}\n  · 안전조치: ${item.현재안전조치}\n  · 개선대책: ${item.개선대책}`;
     }).join("\n\n");
@@ -160,10 +180,8 @@ async function fetchOne(구분, jobInfo, files) {
 ## 출력: JSON 객체만 (백틱·설명 금지, 문자열 내 큰따옴표→작은따옴표)
 {"구분":"${구분}","주요위험요인":"...","현재안전조치":"...","개선대책":"...","개선전":{"빈도":2,"강도":2},"개선후":{"빈도":1,"강도":1}}`;
   const content = buildContent(prompt, files);
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content}]})});
-  if(!res.ok)throw new Error(`HTTP ${res.status}`);
-  const data=await res.json();
-  const raw=data.content?.map(b=>b.text||"").join("")||"";
+  const data = await callClaude([{role:"user",content}], 1000);
+  const raw = data.content?.map(b=>b.text||"").join("")||"";
   const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
   if(s===-1||e===-1)throw new Error(`[${구분}] JSON 없음`);
   let parsed;
@@ -398,10 +416,8 @@ ${userMsg}
 {"mode":"chat","답변":"전문가 답변. 수정 제안 시 '원하시면 수정해드릴까요?'로 마무리"}
 
 JSON만 출력. 백틱·설명 금지.`;
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,messages:[{role:"user",content:prompt}]})});
-      if(!res.ok)throw new Error(`HTTP ${res.status}`);
-      const data=await res.json();
-      const raw=data.content?.map(b=>b.text||"").join("")||"";
+      const data = await callClaude([{role:"user",content:prompt}], 3000);
+      const raw = data.content?.map(b=>b.text||"").join("")||"";
       const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
       if(s===-1||e===-1){
         setChatMsgs(p=>[...p,{role:"assistant",content:raw.trim()||"(응답 비어있음)"}]);
