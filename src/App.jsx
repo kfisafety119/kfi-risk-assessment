@@ -40,7 +40,7 @@ async function callClaude(messages, maxTokens = 1000) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: "claude-opus-4-7",
       max_tokens: maxTokens,
       messages
     })
@@ -145,7 +145,7 @@ async function processFile(file) {
     } else if (ext==="txt") {
       return {name:file.name, type:"text", content:await file.text()};
     } else if (ext==="hwp") {
-      return {name:file.name, type:"hwp", content:""};
+      return {name:file.name, type:"blocked", content:"", reason:"hwp"};
     }
     return {name:file.name, type:"unknown", content:""};
   } catch(e) {
@@ -309,14 +309,14 @@ const FILE_ICON = f => {
   if(f.type==="pdf") return "📕";
   if(f.type==="image") return "🖼️";
   if(f.type==="text") return f.name.endsWith(".docx")?"📝":"📄";
-  if(f.type==="hwp") return "📋";
+  if(f.type==="blocked") return "🚫";
   return "📎";
 };
 const FILE_DESC = f => {
   if(f.type==="pdf") return "PDF — AI 직접 분석";
   if(f.type==="image") return "이미지 — AI 직접 분석";
   if(f.type==="text") return `텍스트 추출 완료 (${f.content?.length?.toLocaleString()}자)`;
-  if(f.type==="hwp") return "HWP — 파일명만 참조";
+  if(f.type==="blocked") return "❌ 차단됨 (지원하지 않는 파일)";
   return "첨부됨";
 };
 
@@ -333,13 +333,24 @@ export default function App() {
   const [chatMsgs,setChatMsgs]=useState([]);
   const [chatInput,setChatInput]=useState("");
   const [chatLoading,setChatLoading]=useState(false);
+  const [history, setHistory] = useState([]);
+  const HISTORY_MAX = 5;
+  const [chatAttachedFiles, setChatAttachedFiles] = useState([]);
+  const [chatFileLoading, setChatFileLoading] = useState(false);
   const fileRef=useRef();
 
   const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(""),3000);};
 
   const addFiles = useCallback(async(fileList)=>{
-    const files = Array.from(fileList);
+    let files = Array.from(fileList);
     if(!files.length) return;
+    const hwpFiles = files.filter(f=>(f.name.split(".").pop()||"").toLowerCase()==="hwp");
+    if(hwpFiles.length>0){
+      setToast(`⚠️ HWP 파일(${hwpFiles.length}개)은 첨부할 수 없습니다. PDF로 변환 후 업로드해주세요.`);
+      setTimeout(()=>setToast(""),5000);
+      files = files.filter(f=>(f.name.split(".").pop()||"").toLowerCase()!=="hwp");
+      if(files.length===0) return;
+    }
     setFileLoading(true);
     const processed = await Promise.all(files.map(processFile));
     setAttachedFiles(prev=>[...prev, ...processed.filter(Boolean)]);
@@ -400,6 +411,11 @@ export default function App() {
 [현재 평가 내용]
 ${JSON.stringify(result.항목,null,2)}
 
+[채팅 첨부파일]
+${chatAttachedFiles.length > 0 ? chatAttachedFiles.map(f=>`- ${f.name}`).join("\n") : "(없음)"}
+
+채팅 첨부파일이 있다면 그 내용도 참고하여 더 정확하게 수정해주세요.
+
 [사용자 메시지]
 ${userMsg}
 
@@ -416,7 +432,10 @@ ${userMsg}
 {"mode":"chat","답변":"전문가 답변. 수정 제안 시 '원하시면 수정해드릴까요?'로 마무리"}
 
 JSON만 출력. 백틱·설명 금지.`;
-      const data = await callClaude([{role:"user",content:prompt}], 3000);
+      const content = chatAttachedFiles.length > 0
+        ? buildContent(prompt, chatAttachedFiles)
+        : prompt;
+      const data = await callClaude([{role:"user",content}], 3000);
       const raw = data.content?.map(b=>b.text||"").join("")||"";
       const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
       if(s===-1||e===-1){
@@ -442,6 +461,10 @@ JSON만 출력. 백틱·설명 금지.`;
           const found=parsed.항목.find(x=>x.구분===cat);
           return found||result.항목[i];
         });
+        setHistory(h=>{
+          const next=[...h, JSON.parse(JSON.stringify(result.항목))];
+          return next.slice(-HISTORY_MAX);
+        });
         setResult(p=>({...p,항목:merged}));
         setChatMsgs(p=>[...p,{role:"assistant",content:"✅ "+(parsed.변경요약||"수정 적용했습니다.")}]);
       }else{
@@ -450,7 +473,38 @@ JSON만 출력. 백틱·설명 금지.`;
     }catch(e){
       setChatMsgs(p=>[...p,{role:"assistant",content:"⚠️ 오류: "+e.message,error:true}]);
     }
+    setChatAttachedFiles([]);
     setChatLoading(false);
+  };
+
+  const handleUndo = () => {
+    if(history.length===0) return;
+    const prev = history[history.length-1];
+    setResult(p=>({...p,항목:prev}));
+    setHistory(h=>h.slice(0,-1));
+    setChatMsgs(p=>[...p,{role:"assistant",content:"↶ 이전 단계로 되돌렸습니다."}]);
+  };
+
+  const handleChatFileAdd = async(files)=>{
+    if(!files||files.length===0) return;
+    setChatFileLoading(true);
+    const newFiles=[];
+    for(const file of Array.from(files)){
+      const ext=(file.name.split(".").pop()||"").toLowerCase();
+      if(ext==="hwp"){
+        setToast("⚠️ HWP 파일은 첨부할 수 없습니다. PDF로 변환 후 업로드해주세요.");
+        setTimeout(()=>setToast(""),4000);
+        continue;
+      }
+      const processed = await processFile(file);
+      newFiles.push(processed);
+    }
+    setChatAttachedFiles(p=>[...p,...newFiles]);
+    setChatFileLoading(false);
+  };
+
+  const handleChatFileRemove = (idx)=>{
+    setChatAttachedFiles(p=>p.filter((_,i)=>i!==idx));
   };
 
   const B="1px solid #555";
@@ -521,10 +575,10 @@ JSON만 출력. 백틱·설명 금지.`;
             <div style={{marginBottom:18}}>
               <label style={{fontSize:12,fontWeight:600,display:"block",marginBottom:6}}>
                 📎 참고 문서 첨부
-                <span style={{fontSize:11,color:"#9ca3af",fontWeight:400,marginLeft:6}}>PDF · 이미지 · HWP · Word · TXT</span>
+                <span style={{fontSize:11,color:"#9ca3af",fontWeight:400,marginLeft:6}}>PDF · 이미지 · Word · TXT</span>
               </label>
               <input ref={fileRef} type="file" multiple
-                accept=".pdf,.docx,.txt,.hwp,.jpg,.jpeg,.png,.gif,.webp,.bmp"
+                accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.bmp"
                 style={{display:"none"}} onChange={e=>addFiles(e.target.files)}/>
               <div
                 onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
@@ -537,6 +591,19 @@ JSON만 출력. 백틱·설명 금지.`;
                       <div style={{fontSize:13,fontWeight:600,color:"#475569"}}>클릭하거나 파일을 여기로 끌어오세요</div>
                       <div style={{fontSize:11,color:"#94a3b8",marginTop:3}}>공사시방서, 기기사양서, 계획안 등</div>
                     </>}
+              </div>
+              <div style={{marginTop:10,padding:"10px 14px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,fontSize:11.5,color:"#92400e",display:"flex",alignItems:"flex-start",gap:8}}>
+                <span style={{fontSize:14,flexShrink:0}}>📋</span>
+                <div>
+                  <strong>한글파일(HWP)은 첨부할 수 없습니다.</strong>
+                  <br/>
+                  한글파일은 자체 구조상 AI가 내용을 읽을 수 없습니다. 아래 방법으로 변환 후 업로드해주세요.
+                  <ul style={{margin:"6px 0 0 18px",padding:0,lineHeight:1.6}}>
+                    <li><strong>방법 1.</strong> 한글에서 파일 → 다른 이름으로 저장 → 파일 형식 "PDF" 선택</li>
+                    <li><strong>방법 2.</strong> 한글에서 파일 → PDF로 저장하기 (단축키 Alt+P)</li>
+                    <li><strong>방법 3.</strong> 한글에서 파일 → 다른 이름으로 저장 → "MS워드 문서(*.docx)" 선택</li>
+                  </ul>
+                </div>
               </div>
               {attachedFiles.length>0&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -674,6 +741,12 @@ JSON만 출력. 백틱·설명 금지.`;
                   <span style={{fontSize:16}}>💬</span>
                   <div style={{fontSize:14,fontWeight:700,color:"#1e3a5f"}}>AI와 대화하며 수정하기</div>
                   <span style={{fontSize:11,color:"#6b7280",fontWeight:400,flex:1,minWidth:200}}>예: "기계적 위험요인을 중량물 취급으로 바꿔줘"</span>
+                  <button
+                    onClick={handleUndo}
+                    disabled={history.length===0}
+                    style={{padding:"6px 12px",fontSize:12,border:"1px solid #1e3a5f",background:history.length===0?"#f3f4f6":"#fff",color:history.length===0?"#9ca3af":"#1e3a5f",borderRadius:6,cursor:history.length===0?"not-allowed":"pointer",fontWeight:600}}
+                    title={history.length===0?"되돌릴 이전 상태가 없습니다":`${history.length}단계 전으로 돌아갑니다`}
+                  >↶ 되돌리기{history.length>0?` (${history.length})`:""}</button>
                   {chatMsgs.length>0&&(
                     <button onClick={()=>setChatMsgs([])} style={{fontSize:11,padding:"3px 10px",borderRadius:5,border:"1px solid #cbd5e1",background:"white",color:"#64748b",cursor:"pointer",fontFamily:"inherit"}}>대화 초기화</button>
                   )}
@@ -690,6 +763,24 @@ JSON만 출력. 백틱·설명 금지.`;
                     )}
                   </div>
                 )}
+                <div style={{marginBottom:8}}>
+                  {chatAttachedFiles.length>0&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                      {chatAttachedFiles.map((f,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:"#f0fdf4",border:"1px solid #86efac",borderRadius:6,padding:"4px 8px",fontSize:11}}>
+                          <span>{FILE_ICON(f)}</span>
+                          <span>{f.name}</span>
+                          <button onClick={()=>handleChatFileRemove(i)} style={{border:"none",background:"transparent",color:"#dc2626",cursor:"pointer",fontWeight:700,fontSize:14,padding:0}} title="제거">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",border:"1px dashed #1e3a5f",borderRadius:6,fontSize:11,color:"#1e3a5f",cursor:"pointer",background:"#fff"}}>
+                    📎 {chatFileLoading?"파일 처리중...":"추가 자료 첨부"}
+                    <input type="file" multiple accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.bmp" style={{display:"none"}} onChange={e=>{handleChatFileAdd(e.target.files);e.target.value="";}} disabled={chatFileLoading}/>
+                  </label>
+                  <span style={{fontSize:10,color:"#9ca3af",marginLeft:8}}>현장 사진 · 추가 시방서 등 첨부 가능 (HWP 제외)</span>
+                </div>
                 <div style={{display:"flex",gap:8}}>
                   <input className="f" style={{flex:1}} placeholder="수정할 내용을 입력하세요 (Enter로 전송)" value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!chatLoading)handleChatModify();}} disabled={chatLoading}/>
                   <button className="bp" onClick={handleChatModify} disabled={chatLoading||!chatInput.trim()} style={{opacity:chatLoading||!chatInput.trim()?.5:1,cursor:chatLoading||!chatInput.trim()?"not-allowed":"pointer"}}>
