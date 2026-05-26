@@ -334,6 +334,186 @@ function exportWord(result, mode = "download") {
   URL.revokeObjectURL(url);
 }
 
+async function exportDocx(result) {
+  const fd = result.formData;
+  const {
+    Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun,
+    AlignmentType, VerticalAlign, WidthType, BorderStyle, ShadingType,
+    PageOrientation, VerticalMergeType, HeightRule,
+  } = await import("docx");
+
+  const mm = v => Math.round(v * 56.692);
+  const PW = mm(297), PH = mm(210), MG = mm(10);
+  const UW = PW - MG * 2;
+
+  // 14열 비율 → twips
+  const CW = [5,8,3.5,3.5,4,13,8,3.5,3.5,4,9,9,8,14].map(p => Math.round(UW * p / 100));
+
+  const FN = "맑은 고딕";
+  const bd = { style: BorderStyle.SINGLE, size: 6, color: "555555" };
+  const B  = { top: bd, bottom: bd, left: bd, right: bd };
+  const nb = { style: BorderStyle.NONE };
+  const NB = { top: nb, bottom: nb, left: nb, right: nb };
+  const shHdr  = { type: ShadingType.SOLID, color: "d0d7e3", fill: "d0d7e3" };
+  const shSub  = { type: ShadingType.SOLID, color: "e8eaf0", fill: "e8eaf0" };
+  const shSep  = { type: ShadingType.SOLID, color: "f5f5f5", fill: "f5f5f5" };
+  const shGray = { type: ShadingType.SOLID, color: "f5f5f5", fill: "f5f5f5" };
+  const shRisk = s => { const c = s>=6?"FECACA":s>=3?"FDE68A":"BBF7D0"; return {type:ShadingType.SOLID,color:c,fill:c}; };
+
+  const run = (text, sz=14, bold=false, color="000000") =>
+    new TextRun({ text: String(text??''), font: FN, size: sz, bold, color });
+  const par = (runs, al=AlignmentType.CENTER) =>
+    new Paragraph({ children:[runs].flat(), alignment: al, spacing:{before:30,after:30} });
+  const tc = (children, opts={}) => new TableCell({
+    children: [children].flat(),
+    borders: opts.nb ? NB : B,
+    verticalAlign: opts.va || VerticalAlign.CENTER,
+    shading: opts.sh,
+    columnSpan: opts.cs,
+    verticalMerge: opts.vm,
+    width: opts.w ? {size:opts.w, type:WidthType.DXA} : undefined,
+  });
+  const HC = (txt, opts={}) => tc(par(run(txt,14,true)),   {sh:shHdr,...opts});
+  const DC = (txt, opts={}) => tc(par(run(txt,14,false,opts.color||"000000"), opts.al||AlignmentType.CENTER), opts);
+  const EC = (opts={})      => tc(par(run("")), opts);
+
+  // ── 결재란 ──
+  const apvTbl = new Table({
+    width: {size:mm(60), type:WidthType.DXA},
+    rows: [
+      new TableRow({children:[HC("작  성",{w:mm(30)}), HC("승  인",{w:mm(30)})]}),
+      new TableRow({children:[EC({w:mm(30)}), EC({w:mm(30)})]}),
+    ],
+  });
+
+  // ── 제목 + 결재란 (비표시 테이블로 좌우 배치) ──
+  const titleTbl = new Table({
+    width: {size:UW, type:WidthType.DXA},
+    rows: [new TableRow({children:[
+      tc(par(run("수시 위험성평가표",40,true)), {nb:true}),
+      tc([apvTbl], {nb:true, w:mm(64), va:VerticalAlign.TOP}),
+    ]})],
+  });
+
+  // ── 기본정보 ──
+  const 사유s = SAUSAGES.map(s =>
+    `${fd.작성사유===s?"■":"□"} ${s}${s==="기타"&&fd.기타사유?`(${fd.기타사유})`:""}`
+  ).join("   ");
+  const infoTbl = new Table({
+    width: {size:UW, type:WidthType.DXA},
+    rows: [
+      new TableRow({children:[HC("소     속"), DC(fd.소속||"",{al:AlignmentType.LEFT}), HC("작  성  자"), DC(fd.작성자||"",{al:AlignmentType.LEFT})]}),
+      new TableRow({children:[HC("작업(업무)명"), tc(par(run(fd.작업명||"",14,true),AlignmentType.LEFT),{cs:3})]}),
+      new TableRow({children:[HC("평  가  일  자"), tc(par(run(fmtDate(fd.평가일자),14),AlignmentType.LEFT),{cs:3})]}),
+      new TableRow({children:[HC("작  성  사  유"), tc(par(run(사유s,14),AlignmentType.LEFT),{cs:3})]}),
+    ],
+  });
+
+  // ── 주평가표 ──
+  const mainRows = [
+    new TableRow({
+      tableHeader: true,
+      children: [
+        HC("구분",        {w:CW[0]}),
+        HC("주요위험요인", {cs:4, w:CW[1]+CW[2]+CW[3]+CW[4]}),
+        HC("현재\n안전조치",{w:CW[5]}),
+        HC("개선대책",     {cs:4, w:CW[6]+CW[7]+CW[8]+CW[9]}),
+        HC("개선\n예정일", {w:CW[10]}),
+        HC("완료\n확인일", {w:CW[11]}),
+        HC("평가\n구분",   {w:CW[12]}),
+        HC("담당자\n(작성자)",{w:CW[13]}),
+      ],
+    }),
+  ];
+
+  result.항목.forEach((item, idx) => {
+    const b=item.개선전||{}, a=item.개선후||{};
+    const bF=b.빈도||1, bI=b.강도||1, bS=bF*bI;
+    const low = bS<=2;
+    const aSn = low ? 0 : (a.빈도||1)*(a.강도||1);
+    const aF  = low ? "-" : String(a.빈도||1);
+    const aI  = low ? "-" : String(a.강도||1);
+    const aS  = low ? "-" : String(aSn);
+    const gray = "9ca3af";
+
+    // Row A
+    mainRows.push(new TableRow({children:[
+      tc(par(run(item.구분,14,true)),                                                   {sh:shHdr, vm:VerticalMergeType.RESTART}),
+      tc(par(run(item.주요위험요인||"",14), AlignmentType.LEFT),                        {cs:4}),
+      tc(par(run(item.현재안전조치||"",14), AlignmentType.LEFT),                        {vm:VerticalMergeType.RESTART}),
+      tc(par(run(low?"-":(item.개선대책||""),14,false,low?gray:"000000"), low?AlignmentType.CENTER:AlignmentType.LEFT), {cs:4}),
+      EC({vm:VerticalMergeType.RESTART}),
+      EC({vm:VerticalMergeType.RESTART}),
+      tc(par(run("□ 적정",14))),
+      EC({vm:VerticalMergeType.RESTART}),
+    ]}));
+
+    // Row B
+    mainRows.push(new TableRow({children:[
+      EC({vm:VerticalMergeType.CONTINUE}),
+      tc(par(run("개선전",13,true)), {sh:shSub}),
+      DC(String(bF)),
+      DC(String(bI)),
+      tc(par(run(String(bS),14,true,"ffffff")), {sh:shRisk(bS)}),
+      EC({vm:VerticalMergeType.CONTINUE}),
+      tc(par(run("개선후",13,true)), {sh:shSub}),
+      DC(aF, {color:low?gray:"000000"}),
+      DC(aI, {color:low?gray:"000000"}),
+      low
+        ? tc(par(run("-",14,false,gray)), {sh:shGray})
+        : tc(par(run(aS,14,true,"ffffff")), {sh:shRisk(aSn)}),
+      EC({vm:VerticalMergeType.CONTINUE}),
+      EC({vm:VerticalMergeType.CONTINUE}),
+      tc(par(run("□ 보완",14))),
+      EC({vm:VerticalMergeType.CONTINUE}),
+    ]}));
+
+    // 구분선 (마지막 항목 제외)
+    if (idx < result.항목.length - 1) {
+      mainRows.push(new TableRow({
+        height: {value:80, rule:HeightRule.EXACT},
+        children: [new TableCell({children:[new Paragraph({children:[]})], columnSpan:14, borders:B, shading:shSep})],
+      }));
+    }
+  });
+
+  const mainTbl = new Table({width:{size:UW,type:WidthType.DXA}, columnWidths:CW, rows:mainRows});
+
+  const doc = new Document({
+    sections: [{
+      properties: {
+        page: {
+          size: {orientation:PageOrientation.LANDSCAPE, width:PW, height:PH},
+          margin: {top:MG, right:MG, bottom:MG, left:MG},
+        },
+      },
+      children: [
+        titleTbl,
+        new Paragraph({children:[], spacing:{before:60,after:60}}),
+        infoTbl,
+        new Paragraph({children:[], spacing:{before:60,after:60}}),
+        mainTbl,
+        new Paragraph({
+          children:[run("위험도 = 빈도 × 강도  |  6~9: 높음(허용불가)  |  3~4: 보통(개선필요)  |  1~2: 낮음(허용가능)",14,false,"666666")],
+          alignment:AlignmentType.LEFT, spacing:{before:60,after:40},
+        }),
+        new Paragraph({
+          children:[run("⚠ AI 작성 내용 검토 후 공란(개선예정일·완료확인일·담당자 서명)을 자필로 기재하여 정식 문서로 활용하세요.",14,false,"92400e")],
+          alignment:AlignmentType.LEFT,
+        }),
+      ],
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `수시위험성평가_${fd.작업명||"평가"}_${fd.평가일자||""}.docx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 const FILE_ICON = f => {
   if(f.type==="pdf") return "📕";
   if(f.type==="image") return "🖼️";
@@ -411,7 +591,7 @@ export default function App() {
 
   const handleSave = async (saveType) => {
     if (saveType === "Word") {
-      exportWord(result, "download");
+      await exportDocx(result);
     } else if (saveType === "PDF") {
       exportWord(result, "print");
     }
