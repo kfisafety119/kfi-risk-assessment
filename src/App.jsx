@@ -339,15 +339,18 @@ async function exportDocx(result) {
   const {
     Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun,
     AlignmentType, VerticalAlign, WidthType, BorderStyle, ShadingType,
-    PageOrientation, VerticalMergeType, HeightRule,
+    PageOrientation, VerticalMergeType, HeightRule, TableLayoutType,
   } = await import("docx");
 
   const mm = v => Math.round(v * 56.692);
+  // A4 landscape: docx 라이브러리는 landscape 시 width↔height를 내부적으로 swap함
+  // → Word가 기대하는 w:w=16838(297mm), w:h=11905(210mm)를 얻으려면 인자를 반대로 전달
   const PW = mm(297), PH = mm(210), MG = mm(10);
-  const UW = PW - MG * 2;
+  const UW = PW - MG * 2; // 실제 가로 사용 너비: 297mm - 20mm = 277mm
 
-  // 14열 비율 → twips
-  const CW = [5,8,3.5,3.5,4,13,8,3.5,3.5,4,9,9,8,14].map(p => Math.round(UW * p / 100));
+  // 14열 비율 (화면 colgroup과 동일, 합계 100%) → twips
+  const CW = [6,9,5,5,5,16,9,5,5,5,7,6,7,10].map(p => Math.round(UW * p / 100));
+  CW[CW.length - 1] += UW - CW.reduce((a, b) => a + b, 0); // 반올림 오차 보정
 
   const FN = "맑은 고딕";
   const bd = { style: BorderStyle.SINGLE, size: 6, color: "555555" };
@@ -477,13 +480,13 @@ async function exportDocx(result) {
     }
   });
 
-  const mainTbl = new Table({width:{size:UW,type:WidthType.DXA}, columnWidths:CW, rows:mainRows});
+  const mainTbl = new Table({width:{size:UW,type:WidthType.DXA}, columnWidths:CW, layout:TableLayoutType.FIXED, rows:mainRows});
 
   const doc = new Document({
     sections: [{
       properties: {
         page: {
-          size: {orientation:PageOrientation.LANDSCAPE, width:PW, height:PH},
+          size: {orientation:PageOrientation.LANDSCAPE, width:PH, height:PW},
           margin: {top:MG, right:MG, bottom:MG, left:MG},
         },
       },
