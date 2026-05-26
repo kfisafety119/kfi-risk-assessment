@@ -594,7 +594,13 @@ export default function App() {
 
   const handleSave = async (saveType) => {
     if (saveType === "Word") {
-      await exportDocx(result);
+      try {
+        await exportDocx(result);
+      } catch (e) {
+        showToast("❌ DOCX 생성 오류: " + e.message);
+        console.error("exportDocx error:", e);
+        return;
+      }
     } else if (saveType === "PDF") {
       exportWord(result, "print");
     }
