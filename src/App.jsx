@@ -517,6 +517,128 @@ async function exportDocx(result) {
   URL.revokeObjectURL(url);
 }
 
+async function exportPDF(result) {
+  const fd = result.formData;
+  const 사유str = SAUSAGES.map(s=>`${fd.작성사유===s?"■":"□"} ${s}${s==="기타"&&fd.기타사유?`(${fd.기타사유})`:""}`).join("   ");
+  const rows = result.항목.map(item=>{
+    const b=item.개선전||{},a=item.개선후||{};
+    const bF=b.빈도||1,bI=b.강도||1,bS=bF*bI;
+    const lowRisk=bS<=2;
+    const aF=lowRisk?"-":(a.빈도||1);
+    const aI=lowRisk?"-":(a.강도||1);
+    const aS=lowRisk?"-":(a.빈도||1)*(a.강도||1);
+    const 개선대책=lowRisk?"-":(item.개선대책||"");
+    const bCol=bS>=6?"#FECACA":bS>=3?"#FDE68A":"#BBF7D0";
+    const aCol=lowRisk?"#f5f5f5":(aS>=6?"#FECACA":aS>=3?"#FDE68A":"#BBF7D0");
+    const t=lowRisk?"#999":"#000";
+    return `
+      <tr>
+        <td rowspan="2" style="border:1px solid #555;padding:4px 3px;text-align:center;font-weight:bold;background:#dce3ee;vertical-align:middle;font-size:8pt;">${item.구분}</td>
+        <td colspan="4" style="border:1px solid #555;padding:4px 3px;vertical-align:top;font-size:7.5pt;line-height:1.5;">${(item.주요위험요인||"").replace(/\n/g,"<br>")}</td>
+        <td rowspan="2" style="border:1px solid #555;padding:4px 3px;vertical-align:top;font-size:7.5pt;line-height:1.5;">${(item.현재안전조치||"").replace(/\n/g,"<br>")}</td>
+        <td colspan="4" style="border:1px solid #555;padding:4px 3px;vertical-align:top;font-size:7.5pt;line-height:1.5;text-align:${lowRisk?"center":"left"};color:${t};">${개선대책.replace(/\n/g,"<br>")}</td>
+        <td rowspan="2" style="border:1px solid #555;padding:3px;"></td>
+        <td rowspan="2" style="border:1px solid #555;padding:3px;"></td>
+        <td rowspan="2" style="border:1px solid #555;padding:0;text-align:center;font-size:7.5pt;vertical-align:middle;">
+          <div style="padding:5px 2px;border-bottom:1px solid #555;">□ 적정</div>
+          <div style="padding:5px 2px;">□ 보완</div>
+        </td>
+        <td rowspan="2" style="border:1px solid #555;padding:3px;"></td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #555;padding:3px;background:#e8eaf0;text-align:center;font-size:7pt;font-weight:bold;">개선전</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;font-size:8pt;">${bF}</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;font-size:8pt;">${bI}</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;background:${bCol};font-weight:bold;font-size:8pt;">${bS}</td>
+        <td style="border:1px solid #555;padding:3px;background:#e8eaf0;text-align:center;font-size:7pt;font-weight:bold;">개선후</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;font-size:8pt;color:${t};">${aF}</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;font-size:8pt;color:${t};">${aI}</td>
+        <td style="border:1px solid #555;padding:3px;text-align:center;background:${aCol};font-weight:bold;font-size:8pt;color:${t};">${aS}</td>
+      </tr>
+      <tr><td colspan="14" style="height:3px;background:#f5f5f5;border:1px solid #ddd;"></td></tr>`;
+  }).join("");
+
+  const inner = `
+    <table style="margin-bottom:3px;border-collapse:collapse;width:100%;table-layout:fixed;">
+      <tr>
+        <td style="width:75%;"><h1 style="text-align:center;font-size:14pt;letter-spacing:6px;margin:4px 0;">수시 위험성평가표</h1></td>
+        <td style="width:25%;vertical-align:top;text-align:right;">
+          <table style="border-collapse:collapse;display:inline-table;table-layout:fixed;">
+            <tr>
+              <td style="border:1px solid #555;padding:2px 0;background:#d0d7e3;text-align:center;font-weight:bold;font-size:8pt;width:60px;">작&nbsp;성</td>
+              <td style="border:1px solid #555;padding:2px 0;background:#d0d7e3;text-align:center;font-weight:bold;font-size:8pt;width:60px;">승&nbsp;인</td>
+            </tr>
+            <tr><td style="border:1px solid #555;height:36px;width:60px;"></td><td style="border:1px solid #555;height:36px;width:60px;"></td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+    <table style="margin-bottom:2px;border-collapse:collapse;width:100%;table-layout:fixed;">
+      <colgroup><col style="width:8%"><col style="width:38%"><col style="width:8%"><col></colgroup>
+      <tr><td style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 4px;border:1px solid #555;font-size:8pt;white-space:nowrap;">소&nbsp;&nbsp;&nbsp;속</td><td style="padding:3px 5px;border:1px solid #555;font-size:8pt;">${fd.소속||""}</td><td style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 4px;border:1px solid #555;font-size:8pt;white-space:nowrap;">작&nbsp;성&nbsp;자</td><td style="padding:3px 5px;border:1px solid #555;font-size:8pt;">${fd.작성자||""}</td></tr>
+      <tr><td style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 4px;border:1px solid #555;font-size:8pt;white-space:nowrap;">작업(업무)명</td><td style="padding:3px 5px;border:1px solid #555;font-size:8pt;" colspan="3"><b>${fd.작업명||""}</b></td></tr>
+      <tr><td style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 4px;border:1px solid #555;font-size:8pt;white-space:nowrap;">평&nbsp;가&nbsp;일&nbsp;자</td><td style="padding:3px 5px;border:1px solid #555;font-size:8pt;" colspan="3">${fmtDate(fd.평가일자)}</td></tr>
+      <tr><td style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 4px;border:1px solid #555;font-size:8pt;white-space:nowrap;">작&nbsp;성&nbsp;사&nbsp;유</td><td style="padding:3px 5px;border:1px solid #555;font-size:7.5pt;" colspan="3">${사유str}</td></tr>
+    </table>
+    <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+      <colgroup>
+        <col style="width:5%"><col style="width:8%"><col style="width:3.5%"><col style="width:3.5%"><col style="width:4%">
+        <col style="width:13%"><col style="width:8%"><col style="width:3.5%"><col style="width:3.5%"><col style="width:4%">
+        <col style="width:9%"><col style="width:9%"><col style="width:8%"><col style="width:14%">
+      </colgroup>
+      <tr>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;">구분</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;" colspan="4">주요위험요인</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;">현재 안전조치</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;" colspan="4">개선대책</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;white-space:nowrap;">개선예정일</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;white-space:nowrap;">완료확인일</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;white-space:nowrap;">평가구분</th>
+        <th style="background:#d0d7e3;font-weight:bold;text-align:center;padding:3px 2px;border:1px solid #555;font-size:8pt;white-space:nowrap;">담당자(작성자)</th>
+      </tr>
+      ${rows}
+    </table>
+    <p style="font-size:7.5pt;color:#666;margin:3px 0 0;">위험도 = 빈도 × 강도 &nbsp;|&nbsp; 6~9: 높음 &nbsp;|&nbsp; 3~4: 보통 &nbsp;|&nbsp; 1~2: 낮음</p>
+    <p style="font-size:7.5pt;color:#92400e;background:#fef3c7;padding:4px 6px;margin:3px 0 0;">⚠ AI 작성 내용 검토 후 공란(개선예정일·완료확인일·담당자 서명)을 자필로 기재하여 정식 문서로 활용하세요.</p>
+  `;
+
+  const wrap = document.createElement('div');
+  // A4 landscape 297mm ≈ 1122px at 96dpi, padding 10mm ≈ 38px each side
+  wrap.style.cssText = 'position:fixed;top:0;left:-9999px;width:1122px;padding:38px;box-sizing:border-box;background:#fff;font-family:"맑은 고딕","Malgun Gothic",sans-serif;font-size:8.5pt;';
+  wrap.innerHTML = inner;
+  document.body.appendChild(wrap);
+  await document.fonts.ready;
+
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  const canvas = await html2canvas(wrap, { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false });
+  document.body.removeChild(wrap);
+
+  const pW = 297, pH = 210;
+  const ratio = pW / canvas.width;
+  const totalH = canvas.height * ratio;
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  if (totalH <= pH) {
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pW, totalH);
+  } else {
+    const pageHpx = Math.floor(pH / ratio);
+    for (let p = 0; p * pageHpx < canvas.height; p++) {
+      if (p > 0) pdf.addPage([297, 210], 'landscape');
+      const sy = p * pageHpx, sh = Math.min(pageHpx, canvas.height - sy);
+      const pc = document.createElement('canvas');
+      pc.width = canvas.width; pc.height = sh;
+      pc.getContext('2d').drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, canvas.width, sh);
+      pdf.addImage(pc.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pW, sh * ratio);
+    }
+  }
+
+  pdf.save(`수시위험성평가_${fd.작업명||"평가"}_${fd.평가일자||""}.pdf`);
+}
+
 const FILE_ICON = f => {
   if(f.type==="pdf") return "📕";
   if(f.type==="image") return "🖼️";
@@ -602,6 +724,14 @@ export default function App() {
         return;
       }
     } else if (saveType === "PDF") {
+      try {
+        await exportPDF(result);
+      } catch (e) {
+        showToast("❌ PDF 생성 오류: " + e.message);
+        console.error("exportPDF error:", e);
+        return;
+      }
+    } else if (saveType === "인쇄") {
       exportWord(result, "print");
     }
     showToast("✅ 저장 완료 · 관리자 적치 중...");
@@ -877,7 +1007,8 @@ JSON만 출력. 백틱·설명 금지.`;
               <div style={{display:"flex",gap:9,marginBottom:14,justifyContent:"flex-end",flexWrap:"wrap"}}>
                 <button className="bs" onClick={()=>{setStep("input");setResult(null);}}>← 다시 작성</button>
                 <button className="bw" onClick={()=>handleSave("Word")}>📄 Word 저장</button>
-                <button className="bp" onClick={()=>handleSave("PDF")}>🖨️ 인쇄 / PDF</button>
+                <button className="bp" onClick={()=>handleSave("PDF")}>📋 PDF 저장</button>
+                <button className="bp" onClick={()=>handleSave("인쇄")}>🖨️ 인쇄</button>
               </div>
               <div style={{background:"white",borderRadius:8,padding:"18px 20px",boxShadow:"0 2px 10px rgba(0,0,0,.08)"}}>
                 <div style={{display:"flex",alignItems:"flex-start",marginBottom:10}}>
